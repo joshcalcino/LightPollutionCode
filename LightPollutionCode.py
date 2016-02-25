@@ -100,7 +100,16 @@ class Conversions(object):
         return self.loc_obs[2]
 
 class LoadMaps(Conversions): # this class inherits from the Conversions class since it uses all of the functions
-    lightfilename = 'zF16_20100111_20110731_rad_v4_avg_vis.tif'
+    '''
+        This class is concerned with loading in the light pollution, elevation, and eventually
+        the aerosol raster data. When the light pollution data is loaded it in, it is sent
+        to createMapSlice to have the appropriate chunck centred on the observer taken out.
+        Then, a circular mask is generated and projected onto this slice.
+        The height map is generated from combining a number of tiles which depend on the
+        observers location and the size of their horizon. Since the resolution of the height
+        data is much higher than the light, we resample it to a lower resolution.
+    '''
+    lightfilename = 'zF16_20100111_20110731_rad_v4_avg_vis.tif' # filename of your light pollution tif file
     dist = 24.
     
     def __init__(self, time_obs, UTC_offset, loc_obs, obj, obspar):
@@ -113,31 +122,31 @@ class LoadMaps(Conversions): # this class inherits from the Conversions class si
         self.heightmap = self.loadFinalHeightMap()
         self.lightlength = list(self.lightmap.shape)
 
-    def loadFinalLightMap(self):
+    def loadFinalLightMap(self): # load in the light data
         latstr, longstr = self.getObsLatLongStr()
         diststr = str(self.dist)
         filename = 'LM-'+latstr+'-'+longstr+'-'+diststr+'km.tif'
         print 'Attempting to load light pollution data..'
-        if os.path.isfile(filename):
+        if os.path.isfile(filename): # have we created this horizon distance for this observer?
             print 'Pre-existing light map found'
             lightmap = gdal.Open(filename, GA_ReadOnly)
             return self.applyMask(np.array(lightmap.GetRasterBand(1).ReadAsArray()), filename)
-        else:
+        else: # if not, create it and save it
             print 'Generating light pollution map for given location..'
             self.createMapSlice(self.lightfilename, filename[:-4])
             lightmap = gdal.Open(filename, GA_ReadOnly)
             return self.applyMask(np.array(lightmap.GetRasterBand(1).ReadAsArray()), filename)
 
-    def loadFinalHeightMap(self):
+    def loadFinalHeightMap(self): # load in the elevation data
         latstr, longstr = self.getObsLatLongStr()
         diststr = str(self.dist)
         filename = 'HM-'+latstr+'-'+longstr+'-'+diststr+'km.tif'
         print 'Attempting to load height map data..'
-        if os.path.isfile(filename):
+        if os.path.isfile(filename): # does one exist already?
             print 'Pre-existing height map found'
             heightmap = gdal.Open(filename, GA_ReadOnly)
             return self.applyMask(np.array(heightmap.GetRasterBand(1).ReadAsArray()), filename)
-        else:
+        else: # if not, create is, might take a while
             print 'Generating height map for given location, this may take a few minutes..'
             self.stitchheightmap()
             self.createMapSlice('tmpHM.tif', 'tmpHM2')
@@ -149,7 +158,7 @@ class LoadMaps(Conversions): # this class inherits from the Conversions class si
     def loadAersols(self):
         pass # need to add this in later
     
-    def getlatlongstrings(self):
+    def getlatlongstrings(self): # this is here for naming the files
         lat_min, lat_max = self.getLatMinMax()
         long_min, long_max = self.getLongMinMax()
         lat_min, lat_max = int(np.floor(lat_min/un.deg)), int(np.ceil(lat_max/un.deg))
@@ -172,7 +181,7 @@ class LoadMaps(Conversions): # this class inherits from the Conversions class si
             long_maxstr = 'E' + str(long_max)
         return lat_minstr, lat_maxstr, long_minstr, long_maxstr
     
-    def getObsLatLongStr(self):
+    def getObsLatLongStr(self): # this is only for the light and height file names
         lat, long = self.convertLatLong()
         lat, long = round(lat/un.deg, 4), round(long/un.deg, 4)
         if lat < 0:
@@ -185,7 +194,7 @@ class LoadMaps(Conversions): # this class inherits from the Conversions class si
             longstr = 'E' + str(long)
         return latstr, longstr
 
-    def loadHighResElevation(self): #
+    def loadHighResElevation(self): # load the high res elevation data
         lat_min, lat_max = self.getLatMinMax()
         long_min, long_max = self.getLongMinMax()
         lat_min, lat_max = int(np.floor(lat_min/un.deg)), int(np.ceil(lat_max/un.deg))
@@ -226,18 +235,16 @@ class LoadMaps(Conversions): # this class inherits from the Conversions class si
                         #heightmap[latstr + '-' + longstr] = gdal.Open(filename, GA_ReadOnly)
                         heightmap[latstr + ' ' + longstr] = gr.from_file(filename)
                         ''' 
-                        georasters is slower to load the heightmap data by a factor of about 10.
-                        However, we only need to do it once, and the benefit is that georasters
-                        comes with a lot of useful functions. In particular it is easy to stitch, or merge, 
-                        different raster files together. It is also straight forward to align two
-                        rasters of different size.
+                        georasters is slower to load the heightmap data by a factor of about 10,
+                        even more so when you are combining the height maps.
+                        We should aim to replace this with the siutable gdal scripts
                         ''' 
                         break
                     except ValueError:
                         print "Couldn't load high res elevation data, might be files missing"
         return heightmap
         
-    def stitchheightmap(self):
+    def stitchheightmap(self): # stitch all the height maps we loaded, or create them if we didnt
         heightmap = self.loadHighResElevation()
         if None in heightmap.values():
             # find a height map that isn't None and get its info
@@ -248,7 +255,7 @@ class LoadMaps(Conversions): # this class inherits from the Conversions class si
             sealevel = np.zeros(xysize)
             # getting the geo info
             GeoT = list(heightmap[key].geot)
-            for keys, values in heightmap.items():
+            for keys, values in heightmap.items(): # for all the maps over the water, create them
                 if values is None:
                     lat, long = keys.split()
                     # get rid of the front letter and replace it with the correct sign
@@ -266,7 +273,7 @@ class LoadMaps(Conversions): # this class inherits from the Conversions class si
                     heightmap[keys] = gr.GeoRaster(sealevel, geot, projection=heightmap[key].projection)
         i=0
         print 'combining height maps'
-        for item in heightmap:
+        for item in heightmap: # combine all the height maps, THIS TAKES TOO LONG
             i+=1
             if i==1:
                 combineddata = heightmap[item]
@@ -326,13 +333,21 @@ class LoadMaps(Conversions): # this class inherits from the Conversions class si
         return long_min, long_max
 
     def alignHeightwithLight(self, outputfilename):
+        '''
+            Since the light pollution and elevation data have different resolutions,
+            we have to make them the same.
+        '''
         NDV, xsize, ysize, geotlight, Projection, DataType = gr.get_geo_info(self.lightfilename)
         xres, yres = str(geotlight[1]), str(geotlight[5])
         resample_method = 'cubic'
         os.system('gdalwarp '+ 'tmpHM2.tif' + ' ' + outputfilename + ' -r ' + resample_method+' -tr '+xres+' '+yres)
         os.system('rm tmpHM2.tif')
         
-    def createMapSlice(self, mapfilename, outputfilename):
+    def createMapSlice(self, mapfilename, outputfilename): # create a slice out of the data
+        '''
+            We are creating a slice of the data and saving it because we don't want to have
+            to load the gigabyte of data every time we want to run this code
+        '''
         map = gdal.Open(mapfilename, GA_ReadOnly)
         width = map.RasterXSize
         height = map.RasterYSize
@@ -358,7 +373,7 @@ class LoadMaps(Conversions): # this class inherits from the Conversions class si
         NDV, xsize, ysize, Geot, Projection, DataType = gr.get_geo_info(filename)
         return Geot
     
-    def getMapInfo(self, geot):
+    def getMapInfo(self, geot): # just getting some stuff necessary for the mask and mapslice
         lat_min, lat_max = self.getLatMinMax()
         long_min, long_max = self.getLongMinMax()
         xOrigin, yOrigin = geot[0], geot[3]
@@ -419,8 +434,7 @@ class SkyBrightness(object): # the guts of the program, should probably be writt
         I have drawn a diagram which shows the geometry of the problem, and have
         documented how each of the values are derived geometrically
         
-        --- LIST OF SYMBOLS AND THEIR MEANINGS ---
-        
+        See the additional document on the github page which explains the model in more detail
         '''
     def __init__(self, time_obs, UTC_offset, loc_obs, obj, obspar):
         self.time_obs = time_obs
@@ -431,13 +445,18 @@ class SkyBrightness(object): # the guts of the program, should probably be writt
         self.MapData = LoadMaps(self.time_obs, self.UTC_offset, self.loc_obs, self.obj, self.obspar)
         self.upwardInt = self.getUpwardInt()
 
-    def getLightMap(self):
+    def getLightMap(self): # getting the light map, making sure there are no negative values
         M = self.MapData.lightmap
         M[M < 0] = 0
-        M[np.isnan(M)] = 0
+        M[np.isnan(M)] = 0 # or any nans
         return M
     
     def getUpwardInt(self): # load the light map and convert its values into something useable
+        '''
+            I am not completely certain of the units for this section, and thus all the values
+            are likely to be proportionately off the real values. This is fine if we are
+            only interested in fitting the light pollution gradient over a field though.
+        '''
         M = self.MapData.lightmap
         map = self.MapData.getMap()
         pixelWidth = map[1]
@@ -449,8 +468,6 @@ class SkyBrightness(object): # the guts of the program, should probably be writt
         return I_up
     
     def getz(self, alt): # the angle from zenith of the observer's L.O.S
-        #AltAz = self.MapData.convertAltAz()
-        #alt = AltAz.alt
         if alt < 0:
             z = -90 - alt
         else:
@@ -462,6 +479,11 @@ class SkyBrightness(object): # the guts of the program, should probably be writt
         return A
     
     def vectorizeIntegral(self, H, D, Dy, N_a, N_m, sigma_a, sigma_R, c, A, z, az):
+        '''
+            I think it will be worthwhile putting this section in cython as well.
+            We may also want to find a faster integration method, as this is the bottleneck
+            in the code.
+        '''
         l = self.MapData.lightlength
         ans = np.zeros((l[0],l[1]))
         tmp = 0
@@ -499,6 +521,10 @@ class SkyBrightness(object): # the guts of the program, should probably be writt
         return b
 
     def loopsky(self, alt, az):
+        '''
+            Here we are looping over arrays of altitude and azimuth angles to simulate
+            an image of the light pollution of the sky.
+        '''
         I = np.zeros((len(alt), len(az)))
         count = 0
         for i in range(len(alt)):
@@ -511,7 +537,10 @@ class SkyBrightness(object): # the guts of the program, should probably be writt
         return I
 
     def getdxdy(self):
-        #l = len(self.MapData.getLightMap())
+        '''
+            This function will generate the x, y positions over the entire grid, which are
+            needed to work out the angles. See the document on github for more info
+        '''
         l = self.MapData.lightlength
         if l[0] > l[1]:
             centre_coord = int(l[1]/2)
@@ -526,8 +555,6 @@ class SkyBrightness(object): # the guts of the program, should probably be writt
         horizon_dist = self.MapData.dist # just slapping this value in for now
         p = np.sqrt( np.min(self.MapData.lightlength) )
         scale_factor = 2*horizon_dist/p # convert pixels to m
-        #scale_factor_km = scale_factor.to('km') # km
-        #sf = scale_factor_km/u.km # unitless
         sf = scale_factor
         return dx*sf, dy*sf
 
@@ -538,6 +565,10 @@ class SkyBrightness(object): # the guts of the program, should probably be writt
         return D
     
     def getH(self):
+        '''
+            Gathering the height map data and removing any nans and setting any negative
+            values to zero.
+        '''
         H = self.MapData.heightmap
         H[H>0] = 0
         H[np.isnan(H)] = 0
