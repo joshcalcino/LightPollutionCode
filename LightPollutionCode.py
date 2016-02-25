@@ -111,6 +111,7 @@ class LoadMaps(Conversions): # this class inherits from the Conversions class si
     '''
     lightfilename = 'zF16_20100111_20110731_rad_v4_avg_vis.tif' # filename of your light pollution tif file
     dist = 24.
+    changeMapRes = True
     
     def __init__(self, time_obs, UTC_offset, loc_obs, obj, obspar):
         self.time_obs = time_obs
@@ -129,11 +130,19 @@ class LoadMaps(Conversions): # this class inherits from the Conversions class si
         print 'Attempting to load light pollution data..'
         if os.path.isfile(filename): # have we created this horizon distance for this observer?
             print 'Pre-existing light map found'
+            if self.changeMapRes:
+                info = self.getGeotFromFile(filename)
+                pixelsize = info[1]*2 # change the pixel size here..
+                filename = self.changeMapResolution(filename, pixelsize)
             lightmap = gdal.Open(filename, GA_ReadOnly)
             return self.applyMask(np.array(lightmap.GetRasterBand(1).ReadAsArray()), filename)
         else: # if not, create it and save it
             print 'Generating light pollution map for given location..'
             self.createMapSlice(self.lightfilename, filename[:-4])
+            if self.changeMapRes:
+                info = self.getGeotFromFile(filename)
+                pixelsize = info[1]*2 # change the pixel size here..
+                filename = self.changeMapResolution(filename, pixelsize)
             lightmap = gdal.Open(filename, GA_ReadOnly)
             return self.applyMask(np.array(lightmap.GetRasterBand(1).ReadAsArray()), filename)
 
@@ -144,6 +153,15 @@ class LoadMaps(Conversions): # this class inherits from the Conversions class si
         print 'Attempting to load height map data..'
         if os.path.isfile(filename): # does one exist already?
             print 'Pre-existing height map found'
+            '''
+                below is a way to change the resolution of the map, although it is not
+                the most elegant way, it should be pretty straight forward as to how
+                it is done
+            '''
+            if self.changeMapRes:
+                info = self.getGeotFromFile(filename)
+                pixelsize = info[1]*2 # change the pixel size here..
+                filename = self.changeMapResolution(filename, pixelsize)
             heightmap = gdal.Open(filename, GA_ReadOnly)
             return self.applyMask(np.array(heightmap.GetRasterBand(1).ReadAsArray()), filename)
         else: # if not, create is, might take a while
@@ -152,11 +170,29 @@ class LoadMaps(Conversions): # this class inherits from the Conversions class si
             self.createMapSlice('tmpHM.tif', 'tmpHM2')
             os.system('rm tmpHM.tif')
             self.alignHeightwithLight(filename)
+            if self.changeMapRes: # change map resolution?
+                info = self.getGeotFromFile(filename)
+                pixelsize = info[1]*2 # change the pixel size here..
+                filename = self.changeMapResolution(filename, pixelsize)
             heightmap = gdal.Open(filename, GA_ReadOnly)
             return self.applyMask(np.array(heightmap.GetRasterBand(1).ReadAsArray()), filename)
 
     def loadAersols(self):
         pass # need to add this in later
+    
+    def changeMapResolution(self, inputfilename, pixelsize):
+        '''
+            Since gdal wont overwrite an existing file, we need to create a new one.
+            The pixel size is in units which the raster file is saved as. In our case I think
+            that will be degrees. If you call the function getGeotFromFile(filename),
+            you will get the current pixel size of the raster.
+        '''
+        res = str(pixelsize)
+        outputfilename = inputfilename[:-4] + 'px' + res
+        resample_method = 'cubic'
+        os.system('gdalwarp '+ inputfilename + ' ' + outputfilename + ' -r ' + resample_method+' -tr '+res+' '+res)
+        return outputfilename + '.tif'
+        
     
     def getlatlongstrings(self): # this is here for naming the files
         lat_min, lat_max = self.getLatMinMax()
