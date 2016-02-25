@@ -188,10 +188,10 @@ class LoadMaps(Conversions): # this class inherits from the Conversions class si
             you will get the current pixel size of the raster.
         '''
         res = str(pixelsize)
-        outputfilename = inputfilename[:-4] + 'px' + res
+        outputfilename = inputfilename[:-4] + 'px' + res + '.tif'
         resample_method = 'cubic'
         os.system('gdalwarp '+ inputfilename + ' ' + outputfilename + ' -r ' + resample_method+' -tr '+res+' '+res)
-        return outputfilename + '.tif'
+        return outputfilename
         
     
     def getlatlongstrings(self): # this is here for naming the files
